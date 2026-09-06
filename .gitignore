@@ -2,3 +2,4 @@ renders/
 .venv/
 __pycache__/
 *.duckdb
+.playwright-mcp/
