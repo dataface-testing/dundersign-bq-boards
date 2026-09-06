@@ -1,0 +1,266 @@
+title: Dundersign — Growth & Revenue
+notes: >
+  Go-to-market board: where signups come from, how they convert to paid plans,
+  what the sales pipeline is doing, and how subscriptions net out. Built from
+  dundersign_serving.daily_metrics plus the users and subscriptions tables in
+  the dundersign core dataset.
+
+source: warehouse
+
+queries:
+  headline:
+    notes: >
+      Last complete month vs. the month before, rolled up from daily_metrics.
+      Anchored on the last month that ran to its final day so a partial trailing
+      month never reads as a collapse.
+    sql: |
+      with cutoff as (
+        select case
+                 when max(date) = last_day(max(date), month) then date_trunc(max(date), month)
+                 else date_sub(date_trunc(max(date), month), interval 1 month)
+               end as m
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      ),
+      monthly as (
+        select
+          date_trunc(date, month)              as month,
+          sum(new_users)                       as new_users,
+          sum(paid_signup_users)               as paid_signups,
+          sum(subscriptions_started)           as subscriptions_started,
+          sum(canceled_subscriptions_started)  as subscriptions_canceled,
+          sum(opportunities_created)           as opportunities,
+          sum(pipeline_amount)                 as pipeline_amount,
+          sum(won_amount)                      as won_amount
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+        group by month
+      ),
+      paired as (
+        select
+          month,
+          paid_signups,
+          safe_divide(paid_signups, new_users)                              as paid_rate,
+          won_amount,
+          subscriptions_started - subscriptions_canceled                    as net_subscriptions,
+          lag(safe_divide(paid_signups, new_users)) over (order by month)   as prev_paid_rate,
+          lag(paid_signups)      over (order by month)                      as prev_paid_signups,
+          lag(won_amount)        over (order by month)                      as prev_won_amount,
+          lag(subscriptions_started - subscriptions_canceled)
+                                 over (order by month)                      as prev_net_subscriptions
+        from monthly
+      )
+      select
+        paid_signups,
+        safe_divide(paid_signups - prev_paid_signups, prev_paid_signups)     as paid_signups_delta,
+        paid_rate,
+        paid_rate - prev_paid_rate                                           as paid_rate_delta,
+        won_amount,
+        safe_divide(won_amount - prev_won_amount, prev_won_amount)           as won_amount_delta,
+        net_subscriptions,
+        net_subscriptions - prev_net_subscriptions                           as net_subscriptions_delta
+      from paired
+      where month = (select m from cutoff)
+
+  monthly_pipeline:
+    notes: >
+      Sales pipeline created vs. closed-won by month, excluding the trailing
+      partial month.
+    sql: |
+      with cutoff as (
+        select case
+                 when max(date) = last_day(max(date), month) then date_trunc(max(date), month)
+                 else date_sub(date_trunc(max(date), month), interval 1 month)
+               end as m
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      )
+      select month, measure, amount
+      from (
+        select
+          date_trunc(date, month) as month,
+          [struct('Pipeline created' as measure, sum(pipeline_amount) as amount),
+           struct('Closed won',                  sum(won_amount))] as s
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+        group by month
+        having month <= (select m from cutoff)
+      ), unnest(s)
+      order by month, measure
+
+  monthly_subscriptions:
+    notes: >
+      Subscriptions started vs. canceled per month. Cancellations are negated so
+      the two stack around zero and the net is readable at a glance.
+    sql: |
+      with cutoff as (
+        select case
+                 when max(date) = last_day(max(date), month) then date_trunc(max(date), month)
+                 else date_sub(date_trunc(max(date), month), interval 1 month)
+               end as m
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      )
+      select month, movement, subscriptions
+      from (
+        select
+          date_trunc(date, month) as month,
+          [struct('Started' as movement, sum(subscriptions_started) as subscriptions),
+           struct('Canceled',           -sum(canceled_subscriptions_started))] as s
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+        group by month
+        having month <= (select m from cutoff)
+      ), unnest(s)
+      order by month, movement
+
+  signups_by_source:
+    notes: >
+      Signups by acquisition source per quarter of signup, from users.created_at.
+      Junk signups are excluded so the mix reflects real accounts, and the
+      trailing partial quarter is dropped so the last bar is not a short one.
+    sql: |
+      with cutoff as (
+        select max(date) as max_day
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      )
+      select
+        date_trunc(date(created_at), quarter) as quarter,
+        initcap(signup_source)                as source,
+        count(*)                              as signups
+      from `internal-dataface-eng.dundersign.users`
+      where signup_source is not null
+        and not is_junk
+        and last_day(date(created_at), quarter) <= (select max_day from cutoff)
+      group by quarter, source
+      order by quarter, source
+
+  plan_mix:
+    notes: >
+      Current plan distribution across non-junk users. `expired` and `churned`
+      are collapsed into one lapsed bucket; the rest map to their plan name.
+    sql: |
+      select
+        case
+          when plan in ('expired', 'churned') then 'Lapsed'
+          when plan = 'trial'                 then 'Trial'
+          when plan = 'professional_monthly'  then 'Professional (monthly)'
+          when plan = 'professional_annual'   then 'Professional (annual)'
+          else initcap(plan)
+        end      as plan,
+        count(*) as users
+      from `internal-dataface-eng.dundersign.users`
+      where not is_junk
+      group by plan
+      order by users desc
+
+charts:
+  kpi_paid_signups:
+    notes: Signups that arrived on a paid plan in the last complete month.
+    type: kpi
+    query: headline
+    label: Paid Signups
+    value: paid_signups
+    support:
+      value: paid_signups_delta
+      label: vs prior month
+      format: percent_delta
+
+  kpi_paid_rate:
+    notes: Share of all signups in the month that were paid.
+    type: kpi
+    query: headline
+    label: Paid Signup Rate
+    value: paid_rate
+    style:
+      value:
+        format: percent
+    support:
+      value: paid_rate_delta
+      label: vs prior month
+      format: percent_delta
+
+  kpi_won_amount:
+    notes: Closed-won amount in the last complete month.
+    type: kpi
+    query: headline
+    label: Closed Won
+    value: won_amount
+    style:
+      value:
+        format: currency
+    support:
+      value: won_amount_delta
+      label: vs prior month
+      format: percent_delta
+
+  kpi_net_subscriptions:
+    notes: Subscriptions started minus canceled in the last complete month.
+    type: kpi
+    query: headline
+    label: Net New Subscriptions
+    value: net_subscriptions
+    support:
+      value: net_subscriptions_delta
+      label: subs vs prior month
+      format: "+.0f"
+
+  pipeline_chart:
+    notes: Pipeline created vs. closed-won by month — the sales conversion gap.
+    type: line
+    query: monthly_pipeline
+    title: Pipeline vs Closed Won
+    x: month
+    y: amount
+    color: measure
+    y_label: Amount
+    style:
+      axis_y:
+        labels:
+          format: "$,.0f"
+
+  subscriptions_chart:
+    notes: Subscription starts against cancellations, cancellations plotted negative.
+    type: bar
+    query: monthly_subscriptions
+    title: Subscription Movement by Month
+    x: month
+    y: subscriptions
+    color: movement
+    y_label: Subscriptions
+    style:
+      stack: zero
+
+  source_chart:
+    notes: Signup volume by acquisition source, stacked by quarter.
+    type: bar
+    query: signups_by_source
+    title: Signups by Source
+    x: quarter
+    y: signups
+    color: source
+    y_label: Signups
+    style:
+      stack: zero
+
+  plan_chart:
+    notes: Where the user base currently sits across plans.
+    type: bar
+    query: plan_mix
+    title: Users by Plan
+    x: plan
+    y: users
+    sort: { by: users, order: desc }
+    y_label: Users
+
+rows:
+  - notes: Headline go-to-market KPIs for the last complete month.
+    cols:
+      - kpi_paid_signups
+      - kpi_paid_rate
+      - kpi_won_amount
+      - kpi_net_subscriptions
+
+  - notes: Sales motion and subscription base.
+    cols:
+      - pipeline_chart
+      - subscriptions_chart
+
+  - notes: Acquisition mix and where users end up.
+    cols:
+      - source_chart
+      - plan_chart

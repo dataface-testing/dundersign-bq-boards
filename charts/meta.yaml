@@ -1,0 +1,14 @@
+# Directory defaults for every board under charts/.
+#
+# meta.yaml is a partial board: its keys are deep-merged as defaults beneath
+# every board in this directory, and each board overrides what it sets.
+#
+# Every Dundersign board reads the same BigQuery warehouse, so the source is
+# set once here rather than repeated per board.
+
+notes: >
+  Project-wide defaults for the Dundersign boards. `warehouse` is the BigQuery
+  source declared in dbt_charts.yml; on dbt charts Cloud the same name maps to
+  the `internal-dataface-eng` connection.
+
+source: warehouse

@@ -1,0 +1,19 @@
+# dbt charts project configuration for the Dundersign boards.
+#
+# The warehouse is BigQuery, project `internal-dataface-eng`. Boards read the
+# `dundersign*` datasets; queries fully qualify the dataset so one source
+# serves core, serving, and per-source tables alike.
+#
+# Local rendering needs a service-account key. It is never committed: point
+# DCT_BQ_KEYFILE at a key that lives outside this repo, e.g.
+#   export DCT_BQ_KEYFILE=/path/to/onboard-05-sa.json
+# On dbt charts Cloud the same source name maps to the `internal-dataface-eng`
+# connection, which carries its own copy of that credential.
+
+sources:
+  warehouse:
+    type: bigquery
+    project: internal-dataface-eng
+    dataset: dundersign_serving
+    location: us-east4
+    keyfile: "{{ env_var('DCT_BQ_KEYFILE') }}"

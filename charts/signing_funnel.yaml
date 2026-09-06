@@ -1,0 +1,285 @@
+title: Dundersign — Signing Funnel & Usage
+notes: >
+  Operational board for the document lifecycle: how far recipients get through
+  signing, how long completion takes, and where the sessions doing the work come
+  from. Built on the dundersign core dataset, windowed to the trailing 90 days of
+  loaded data.
+
+source: warehouse
+
+queries:
+  window_kpis:
+    notes: >
+      Headline signing numbers over the trailing 90 days of loaded data, with the
+      prior 90-day period for comparison. `maxd` anchors on the last day present
+      in daily_metrics rather than current_date so the board is stable regardless
+      of when it renders.
+    sql: |
+      with maxd as (
+        select max(date) as d
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      ),
+      bounds as (
+        select
+          d                                   as hi,
+          date_sub(d, interval 89 day)        as lo,
+          date_sub(d, interval 90 day)        as prev_hi,
+          date_sub(d, interval 179 day)       as prev_lo
+        from maxd
+      ),
+      recipients as (
+        select
+          case
+            when date(sent_at) between (select lo from bounds) and (select hi from bounds) then 'cur'
+            when date(sent_at) between (select prev_lo from bounds) and (select prev_hi from bounds) then 'prev'
+          end as period,
+          viewed_at,
+          signed_at
+        from `internal-dataface-eng.dundersign.document_recipients`
+        where date(sent_at) between (select prev_lo from bounds) and (select hi from bounds)
+      ),
+      recipient_agg as (
+        select
+          period,
+          count(*)                                            as sent,
+          countif(signed_at is not null)                      as signed,
+          safe_divide(countif(signed_at is not null), count(*)) as signed_rate
+        from recipients
+        where period is not null
+        group by period
+      ),
+      documents as (
+        select
+          case
+            when date(created_at) between (select lo from bounds) and (select hi from bounds) then 'cur'
+            when date(created_at) between (select prev_lo from bounds) and (select prev_hi from bounds) then 'prev'
+          end as period,
+          days_to_complete
+        from `internal-dataface-eng.dundersign.documents`
+        where date(created_at) between (select prev_lo from bounds) and (select hi from bounds)
+      ),
+      document_agg as (
+        select
+          period,
+          count(*) as documents,
+          avg(days_to_complete) as avg_days_to_complete
+        from documents
+        where period is not null
+        group by period
+      )
+      select
+        cur_r.sent                                                        as recipients_sent,
+        safe_divide(cur_r.sent - prev_r.sent, prev_r.sent)                as recipients_sent_delta,
+        cur_r.signed_rate                                                 as signed_rate,
+        cur_r.signed_rate - prev_r.signed_rate                            as signed_rate_delta,
+        cur_d.documents                                                   as documents_created,
+        safe_divide(cur_d.documents - prev_d.documents, prev_d.documents) as documents_created_delta,
+        cur_d.avg_days_to_complete                                        as avg_days_to_complete,
+        cur_d.avg_days_to_complete - prev_d.avg_days_to_complete          as avg_days_to_complete_delta
+      from      (select * from recipient_agg where period = 'cur')  as cur_r
+      join      (select * from recipient_agg where period = 'prev') as prev_r  on true
+      join      (select * from document_agg  where period = 'cur')  as cur_d   on true
+      join      (select * from document_agg  where period = 'prev') as prev_d  on true
+
+  funnel:
+    notes: >
+      Recipient funnel over the trailing 90 days: every recipient a document was
+      sent to, how many opened it, how many signed. Ordered by `ord` so the
+      stages stay in lifecycle order rather than alphabetically.
+    sql: |
+      with maxd as (
+        select max(date) as d
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      ),
+      r as (
+        select *
+        from `internal-dataface-eng.dundersign.document_recipients`
+        where date(sent_at) between date_sub((select d from maxd), interval 89 day)
+                               and (select d from maxd)
+      )
+      select ord, stage, recipients
+      from unnest([
+        struct(1 as ord, 'Sent'   as stage, (select count(*) from r)                              as recipients),
+        struct(2,        'Viewed',          (select countif(viewed_at is not null) from r)),
+        struct(3,        'Signed',          (select countif(signed_at is not null) from r))
+      ])
+      order by ord
+
+  time_to_complete:
+    notes: >
+      Distribution of days from document creation to completion, bucketed, for
+      documents completed in the trailing 90 days. Answers "how long does a
+      signature actually take".
+    sql: |
+      with maxd as (
+        select max(date) as d
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      )
+      select
+        case
+          when days_to_complete = 0        then '0'
+          when days_to_complete = 1        then '1'
+          when days_to_complete between 2 and 3   then '2-3'
+          when days_to_complete between 4 and 7   then '4-7'
+          when days_to_complete between 8 and 14  then '8-14'
+          else '15+'
+        end as bucket,
+        case
+          when days_to_complete = 0        then 1
+          when days_to_complete = 1        then 2
+          when days_to_complete between 2 and 3   then 3
+          when days_to_complete between 4 and 7   then 4
+          when days_to_complete between 8 and 14  then 5
+          else 6
+        end as ord,
+        count(*) as documents
+      from `internal-dataface-eng.dundersign.documents`
+      where days_to_complete is not null
+        and date(completed_at) between date_sub((select d from maxd), interval 89 day)
+                                   and (select d from maxd)
+      group by bucket, ord
+      order by ord
+
+  sessions_by_device:
+    notes: Trailing-90-day session mix by device type — desktop vs mobile vs tablet.
+    sql: |
+      with maxd as (
+        select max(date) as d
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      )
+      select
+        initcap(device_type) as device,
+        count(*)             as sessions
+      from `internal-dataface-eng.dundersign.sessions`
+      where date(started_at) between date_sub((select d from maxd), interval 89 day)
+                                and (select d from maxd)
+      group by device
+      order by sessions desc
+
+  sessions_by_country:
+    notes: >
+      Top ten countries by session volume in the trailing 90 days, with average
+      session length and pages viewed, to show where usage is concentrated.
+      sessions.documents_created is not used here: it is 0 for all 380,963 rows
+      in the source table.
+    sql: |
+      with maxd as (
+        select max(date) as d
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      )
+      select
+        country,
+        count(*)                        as sessions,
+        avg(duration_seconds) / 60.0    as avg_minutes,
+        avg(pages_viewed)               as avg_pages_viewed
+      from `internal-dataface-eng.dundersign.sessions`
+      where date(started_at) between date_sub((select d from maxd), interval 89 day)
+                                and (select d from maxd)
+        and country is not null
+      group by country
+      order by sessions desc
+      limit 10
+
+charts:
+  kpi_recipients_sent:
+    notes: Recipients a document was sent to in the trailing 90 days.
+    type: kpi
+    query: window_kpis
+    label: Recipients Sent (90d)
+    value: recipients_sent
+    support:
+      value: recipients_sent_delta
+      label: vs prior 90 days
+      format: percent_delta
+
+  kpi_signed_rate:
+    notes: Share of those recipients who went on to sign.
+    type: kpi
+    query: window_kpis
+    label: Signed Rate
+    value: signed_rate
+    style:
+      value:
+        format: percent
+    support:
+      value: signed_rate_delta
+      label: vs prior 90 days
+      format: percent_delta
+
+  kpi_documents_created:
+    notes: Documents created in the trailing 90 days.
+    type: kpi
+    query: window_kpis
+    label: Documents Created (90d)
+    value: documents_created
+    support:
+      value: documents_created_delta
+      label: vs prior 90 days
+      format: percent_delta
+
+  kpi_avg_days:
+    notes: Average days from creation to completion; lower is better.
+    type: kpi
+    query: window_kpis
+    label: Avg Days to Complete
+    value: avg_days_to_complete
+    style:
+      value:
+        format: ".1f"
+    support:
+      value: avg_days_to_complete_delta
+      label: days vs prior 90 days
+      format: "+.2f"
+
+  funnel_chart:
+    notes: Where recipients drop out of the signing flow.
+    type: bar
+    query: funnel
+    title: Recipient Funnel (last 90 days)
+    x: stage
+    y: recipients
+    sort: { by: ord, order: asc }
+    y_label: Recipients
+
+  time_to_complete_chart:
+    notes: How long completed documents took, bucketed in days.
+    type: bar
+    query: time_to_complete
+    title: Days to Complete
+    x: bucket
+    y: documents
+    sort: { by: ord, order: asc }
+    x_label: Days from creation to completion
+    y_label: Documents
+
+  device_chart:
+    notes: Session mix by device type.
+    type: pie
+    query: sessions_by_device
+    title: Sessions by Device
+    theta: sessions
+    color: device
+
+  country_table:
+    notes: Session volume, average session length, and average pages viewed per country.
+    type: table
+    query: sessions_by_country
+    title: Top Countries by Sessions
+
+rows:
+  - notes: Headline signing throughput and quality for the trailing 90 days.
+    cols:
+      - kpi_recipients_sent
+      - kpi_signed_rate
+      - kpi_documents_created
+      - kpi_avg_days
+
+  - notes: Where recipients drop off, and how long the survivors take.
+    cols:
+      - funnel_chart
+      - time_to_complete_chart
+
+  - notes: Who is doing the signing, and from where.
+    cols:
+      - device_chart
+      - country_table

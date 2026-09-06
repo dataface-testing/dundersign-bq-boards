@@ -1,0 +1,282 @@
+title: Dundersign — Company Overview
+notes: >
+  Executive at-a-glance board for the last complete month plus three years of
+  monthly trend, sourced from dundersign_serving.monthly_metrics.
+
+source: warehouse
+
+queries:
+  headline:
+    notes: >
+      Last complete month vs. the month before it, for the KPI row. The trailing
+      month in monthly_metrics is partial, so the cutoff CTE steps back to the
+      last month that ran to its final day.
+    sql: |
+      with bounds as (
+        select max(date) as max_day
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      ),
+      cutoff as (
+        select case
+                 when max_day = last_day(max_day, month) then date_trunc(max_day, month)
+                 else date_sub(date_trunc(max_day, month), interval 1 month)
+               end as m
+        from bounds
+      ),
+      paired as (
+        select
+          month,
+          active_users,
+          new_users,
+          revenue,
+          documents_completed,
+          safe_divide(documents_completed, documents_created) as completion_rate,
+          lag(active_users)        over (order by month) as prev_active_users,
+          lag(new_users)           over (order by month) as prev_new_users,
+          lag(revenue)             over (order by month) as prev_revenue,
+          lag(documents_completed) over (order by month) as prev_documents_completed,
+          lag(safe_divide(documents_completed, documents_created))
+                                   over (order by month) as prev_completion_rate
+        from `internal-dataface-eng.dundersign_serving.monthly_metrics`
+      )
+      select
+        month,
+        active_users,
+        safe_divide(active_users - prev_active_users, prev_active_users)
+          as active_users_delta,
+        new_users,
+        safe_divide(new_users - prev_new_users, prev_new_users)
+          as new_users_delta,
+        revenue,
+        safe_divide(revenue - prev_revenue, prev_revenue)
+          as revenue_delta,
+        documents_completed,
+        safe_divide(documents_completed - prev_documents_completed, prev_documents_completed)
+          as documents_completed_delta,
+        completion_rate,
+        completion_rate - prev_completion_rate as completion_rate_delta
+      from paired
+      where month = (select m from cutoff)
+
+  monthly:
+    notes: >
+      Wide monthly history with the trailing partial month dropped, so trend
+      lines never show a false cliff at the right edge. Used by the revenue area
+      chart; the multi-series charts use the long-form queries below.
+    sql: |
+      with bounds as (
+        select max(date) as max_day
+        from `internal-dataface-eng.dundersign_serving.daily_metrics`
+      ),
+      cutoff as (
+        select case
+                 when max_day = last_day(max_day, month) then date_trunc(max_day, month)
+                 else date_sub(date_trunc(max_day, month), interval 1 month)
+               end as m
+        from bounds
+      )
+      select
+        month,
+        new_users,
+        active_users,
+        sessions,
+        documents_created,
+        documents_completed,
+        documents_created - documents_completed as documents_open,
+        revenue,
+        tickets_created,
+        tickets_resolved
+      from `internal-dataface-eng.dundersign_serving.monthly_metrics`
+      where month <= (select m from cutoff)
+      order by month
+
+  monthly_users_long:
+    notes: >
+      Active vs. new users unpivoted to one row per month per series. BigQuery
+      lowercases column aliases, so the display label has to travel as a value
+      in a `series` column rather than as a column name.
+    sql: |
+      select month, series, users
+      from (
+        select
+          month,
+          [struct('Active users' as series, active_users as users),
+           struct('New signups'  as series, new_users    as users)] as s
+        from `internal-dataface-eng.dundersign_serving.monthly_metrics`
+        where month <= (
+          select case
+                   when max(date) = last_day(max(date), month) then date_trunc(max(date), month)
+                   else date_sub(date_trunc(max(date), month), interval 1 month)
+                 end
+          from `internal-dataface-eng.dundersign_serving.daily_metrics`
+        )
+      ), unnest(s)
+      order by month, series
+
+  monthly_documents_long:
+    notes: >
+      Documents created each month split into the part that completed and the
+      part still open, one row per month per outcome, for a stacked bar.
+    sql: |
+      select month, outcome, documents
+      from (
+        select
+          month,
+          [struct('Completed' as outcome, documents_completed as documents),
+           struct('Open' as outcome, documents_created - documents_completed as documents)] as s
+        from `internal-dataface-eng.dundersign_serving.monthly_metrics`
+        where month <= (
+          select case
+                   when max(date) = last_day(max(date), month) then date_trunc(max(date), month)
+                   else date_sub(date_trunc(max(date), month), interval 1 month)
+                 end
+          from `internal-dataface-eng.dundersign_serving.daily_metrics`
+        )
+      ), unnest(s)
+      order by month, outcome
+
+  monthly_tickets_long:
+    notes: Support tickets created vs. resolved, one row per month per series.
+    sql: |
+      select month, series, tickets
+      from (
+        select
+          month,
+          [struct('Created' as series, tickets_created as tickets),
+           struct('Resolved' as series, tickets_resolved as tickets)] as s
+        from `internal-dataface-eng.dundersign_serving.monthly_metrics`
+        where month <= (
+          select case
+                   when max(date) = last_day(max(date), month) then date_trunc(max(date), month)
+                   else date_sub(date_trunc(max(date), month), interval 1 month)
+                 end
+          from `internal-dataface-eng.dundersign_serving.daily_metrics`
+        )
+      ), unnest(s)
+      order by month, series
+
+charts:
+  kpi_active_users:
+    notes: Monthly active users for the last complete month, with month-over-month change.
+    type: kpi
+    query: headline
+    label: Monthly Active Users
+    value: active_users
+    support:
+      value: active_users_delta
+      label: vs prior month
+      format: percent_delta
+
+  kpi_new_users:
+    notes: New signups in the last complete month.
+    type: kpi
+    query: headline
+    label: New Signups
+    value: new_users
+    support:
+      value: new_users_delta
+      label: vs prior month
+      format: percent_delta
+
+  kpi_revenue:
+    notes: Recognised revenue for the last complete month.
+    type: kpi
+    query: headline
+    label: Revenue
+    value: revenue
+    style:
+      value:
+        format: currency
+    support:
+      value: revenue_delta
+      label: vs prior month
+      format: percent_delta
+
+  kpi_documents_completed:
+    notes: Documents that reached completed status in the last complete month.
+    type: kpi
+    query: headline
+    label: Documents Completed
+    value: documents_completed
+    support:
+      value: documents_completed_delta
+      label: vs prior month
+      format: percent_delta
+
+  kpi_completion_rate:
+    notes: Share of documents created in the month that were completed.
+    type: kpi
+    query: headline
+    label: Completion Rate
+    value: completion_rate
+    style:
+      value:
+        format: percent
+    support:
+      value: completion_rate_delta
+      label: vs prior month
+      format: percent_delta
+
+  users_trend:
+    notes: Active vs. new users by month — the top-line growth picture.
+    type: line
+    query: monthly_users_long
+    title: Users by Month
+    x: month
+    y: users
+    color: series
+    y_label: Users
+
+  documents_trend:
+    notes: Documents created each month split into completed and still-open.
+    type: bar
+    query: monthly_documents_long
+    title: Documents Created by Month
+    x: month
+    y: documents
+    color: outcome
+    y_label: Documents
+    style:
+      stack: zero
+
+  revenue_trend:
+    notes: Monthly revenue trend.
+    type: area
+    query: monthly
+    title: Revenue by Month
+    x: month
+    y: revenue
+    y_label: Revenue
+    style:
+      axis_y:
+        labels:
+          format: "$,.0f"
+
+  support_trend:
+    notes: Support tickets created vs. resolved — watch for a persistent gap.
+    type: line
+    query: monthly_tickets_long
+    title: Support Tickets by Month
+    x: month
+    y: tickets
+    color: series
+    y_label: Tickets
+
+rows:
+  - notes: Headline KPI strip for the last complete month.
+    cols:
+      - kpi_active_users
+      - kpi_new_users
+      - kpi_revenue
+      - kpi_documents_completed
+      - kpi_completion_rate
+
+  - notes: Growth and product volume side by side.
+    cols:
+      - users_trend
+      - documents_trend
+
+  - notes: Money and support load.
+    cols:
+      - revenue_trend
+      - support_trend
