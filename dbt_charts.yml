@@ -23,4 +23,3 @@ sources:
     project: internal-dataface-eng
     dataset: dundersign_serving
     location: us-east4
-    keyfile: "{{ env_var('DCT_BQ_KEYFILE') }}"
