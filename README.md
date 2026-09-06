@@ -26,11 +26,13 @@ it for the same reason.
 
 ## Running the boards locally
 
-Boards read BigQuery through a service account; the key is never committed.
-Point `DCT_BQ_KEYFILE` at a key file that lives outside this repo:
+Boards read BigQuery through a service account; the key is never committed, and
+`dbt_charts.yml` carries no credential field at all (see the comment there for
+why). Authenticate with Application Default Credentials, pointing at a key file
+that lives outside this repo:
 
 ```bash
-export DCT_BQ_KEYFILE=/path/to/key.json
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
 dct validate
 dct serve
 ```

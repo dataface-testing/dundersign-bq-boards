@@ -4,11 +4,18 @@
 # `dundersign*` datasets; queries fully qualify the dataset so one source
 # serves core, serving, and per-source tables alike.
 #
-# Local rendering needs a service-account key. It is never committed: point
-# DCT_BQ_KEYFILE at a key that lives outside this repo, e.g.
-#   export DCT_BQ_KEYFILE=/path/to/onboard-05-sa.json
-# On dbt charts Cloud the same source name maps to the `internal-dataface-eng`
-# connection, which carries its own copy of that credential.
+# This source deliberately carries NO credential field.
+#
+# On dbt charts Cloud the source name maps to the `internal-dataface-eng`
+# connection, which supplies the credential. Do not add `keyfile:` here: the
+# whole `sources:` block is rendered through dbt Jinja at load time, so a
+# `{{ env_var(...) }}` that is unset in the render environment does not fail
+# that one key — it drops every source in the file, and the boards render as
+# ERR-SOURCE-NOT-FOUND cards reading "Available sources: none configured".
+#
+# Locally, authenticate with Application Default Credentials instead:
+#   export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json   # outside the repo
+# or `gcloud auth application-default login`.
 
 sources:
   warehouse:
@@ -16,4 +23,3 @@ sources:
     project: internal-dataface-eng
     dataset: dundersign_serving
     location: us-east4
-    keyfile: "{{ env_var('DCT_BQ_KEYFILE') }}"
