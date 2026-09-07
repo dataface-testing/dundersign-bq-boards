@@ -1,0 +1,120 @@
+_schema_version: "0.5.0"  # written automatically by dct migrate
+title: "Dundersign — Revenue & Pipeline"
+notes: "Sales and subscription view: pipeline created, amount won, win rate, and net subscription movement."
+source: dundersign
+
+text: |
+  Opportunity and subscription movement by complete month. Win rate is won amount
+  as a share of pipeline created in the same month.
+
+queries:
+  pipeline_monthly:
+    notes: "Monthly opportunity, pipeline, won and subscription counts from the daily serving table."
+    sql: |
+      SELECT DATE_TRUNC(date, MONTH) AS month,
+             SUM(opportunities_created) AS opportunities_created,
+             SUM(pipeline_amount) AS pipeline_amount,
+             SUM(won_amount) AS won_amount,
+             SAFE_DIVIDE(SUM(won_amount), SUM(pipeline_amount)) AS win_rate,
+             SUM(subscriptions_started) AS subscriptions_started,
+             SUM(canceled_subscriptions_started) AS subscriptions_canceled,
+             SUM(subscriptions_started) - SUM(canceled_subscriptions_started) AS net_subscriptions
+      FROM dundersign_serving.daily_metrics
+      WHERE date < DATE_TRUNC((SELECT MAX(date) FROM dundersign_serving.daily_metrics), MONTH)
+        AND date >= DATE_SUB(DATE_TRUNC((SELECT MAX(date) FROM dundersign_serving.daily_metrics), MONTH), INTERVAL 24 MONTH)
+      GROUP BY month
+      ORDER BY month
+
+  pipeline_headline:
+    notes: "Trailing-90-day sales totals for the KPI strip."
+    sql: |
+      SELECT SUM(pipeline_amount) AS pipeline_amount,
+             SUM(won_amount) AS won_amount,
+             SAFE_DIVIDE(SUM(won_amount), SUM(pipeline_amount)) AS win_rate,
+             SUM(subscriptions_started) - SUM(canceled_subscriptions_started) AS net_subscriptions
+      FROM dundersign_serving.daily_metrics
+      WHERE date > DATE_SUB((SELECT MAX(date) FROM dundersign_serving.daily_metrics), INTERVAL 90 DAY)
+
+charts:
+  kpi_pipeline:
+    notes: "Pipeline created in the trailing 90 days."
+    type: kpi
+    query: pipeline_headline
+    label: Pipeline Created (90d)
+    value: pipeline_amount
+    style:
+      value:
+        format: currency
+
+  kpi_won:
+    notes: "Closed-won value in the trailing 90 days."
+    type: kpi
+    query: pipeline_headline
+    label: Won (90d)
+    value: won_amount
+    style:
+      value:
+        format: currency
+
+  kpi_win_rate:
+    notes: "Won as a share of pipeline created, trailing 90 days."
+    type: kpi
+    query: pipeline_headline
+    label: Win Rate (90d)
+    value: win_rate
+    style:
+      value:
+        format: percent
+
+  kpi_net_subs:
+    notes: "Subscriptions started less cancellations, trailing 90 days."
+    type: kpi
+    query: pipeline_headline
+    label: Net New Subscriptions (90d)
+    value: net_subscriptions
+
+  pipeline_vs_won:
+    notes: "How much pipeline is created each month and how much of it closes."
+    type: bar
+    query: pipeline_monthly
+    title: Pipeline Created vs Won by Month
+    x: month
+    y: [pipeline_amount, won_amount]
+    style:
+      axis_y:
+        labels:
+          format: "currency"
+
+  win_rate_trend:
+    notes: "Win rate over time — is closing efficiency holding up as pipeline grows?"
+    type: line
+    query: pipeline_monthly
+    title: Win Rate by Month
+    x: month
+    y: win_rate
+    style:
+      axis_y:
+        labels:
+          format: "percent"
+
+  subscription_movement:
+    notes: "Subscription starts against cancellations each month."
+    type: bar
+    query: pipeline_monthly
+    title: Subscriptions Started vs Canceled
+    x: month
+    y: [subscriptions_started, subscriptions_canceled]
+
+  opportunities_trend:
+    notes: "Count of opportunities created — top-of-funnel sales activity."
+    type: line
+    query: pipeline_monthly
+    title: Opportunities Created by Month
+    x: month
+    y: opportunities_created
+
+rows:
+  - cols: [kpi_pipeline, kpi_won, kpi_win_rate, kpi_net_subs]
+  - pipeline_vs_won
+  - cols: [win_rate_trend, opportunities_trend]
+  - subscription_movement

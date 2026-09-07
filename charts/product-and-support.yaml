@@ -1,0 +1,121 @@
+_schema_version: "0.5.0"  # written automatically by dct migrate
+title: "Dundersign — Product Usage & Support"
+notes: "Weekly engagement for the product team plus the support ticket picture."
+source: dundersign
+
+text: |
+  Last 26 complete weeks of product engagement and support load. Weeks run
+  Monday–Sunday; the partial current week is excluded.
+
+queries:
+  weekly:
+    notes: "Weekly engagement and support aggregates; excludes the in-progress week."
+    sql: |
+      SELECT DATE_TRUNC(date, WEEK(MONDAY)) AS week,
+             SUM(sessions) AS sessions,
+             AVG(active_users) AS avg_daily_active_users,
+             AVG(avg_session_minutes) AS avg_session_minutes,
+             AVG(avg_pages) AS avg_pages_per_document,
+             SUM(new_users) AS new_users,
+             SAFE_DIVIDE(SUM(paid_signup_users), SUM(new_users)) AS paid_signup_share,
+             SAFE_DIVIDE(SUM(junk_signups), SUM(new_users)) AS junk_signup_share,
+             SUM(tickets_created) AS tickets_created,
+             SUM(tickets_resolved) AS tickets_resolved
+      FROM dundersign_serving.daily_metrics
+      WHERE date >= DATE_SUB(DATE_TRUNC((SELECT MAX(date) FROM dundersign_serving.daily_metrics), WEEK(MONDAY)), INTERVAL 26 WEEK)
+        AND date < DATE_TRUNC((SELECT MAX(date) FROM dundersign_serving.daily_metrics), WEEK(MONDAY))
+      GROUP BY week
+      ORDER BY week
+
+  engagement_headline:
+    notes: "Trailing-30-day engagement and support totals for the KPI strip."
+    sql: |
+      SELECT SUM(sessions) AS sessions,
+             AVG(avg_session_minutes) AS avg_session_minutes,
+             SAFE_DIVIDE(SUM(paid_signup_users), SUM(new_users)) AS paid_signup_share,
+             SUM(tickets_created) AS tickets_created,
+             SUM(tickets_resolved) AS tickets_resolved
+      FROM dundersign_serving.daily_metrics
+      WHERE date > DATE_SUB((SELECT MAX(date) FROM dundersign_serving.daily_metrics), INTERVAL 30 DAY)
+
+charts:
+  kpi_sessions:
+    notes: "Session volume over the trailing 30 days."
+    type: kpi
+    query: engagement_headline
+    label: Sessions (30d)
+    value: sessions
+
+  kpi_session_minutes:
+    notes: "Average time in a session — depth of engagement."
+    type: kpi
+    query: engagement_headline
+    label: Avg Session Minutes
+    value: avg_session_minutes
+
+  kpi_paid_share:
+    notes: "Share of new signups that arrived on a paid plan."
+    type: kpi
+    query: engagement_headline
+    label: Paid Signup Share (30d)
+    value: paid_signup_share
+    style:
+      value:
+        format: percent
+
+  kpi_tickets:
+    notes: "Support tickets opened over the trailing 30 days."
+    type: kpi
+    query: engagement_headline
+    label: Tickets Created (30d)
+    value: tickets_created
+
+  sessions_trend:
+    notes: "Weekly session volume — the headline usage curve."
+    type: area
+    query: weekly
+    title: Sessions per Week
+    x: week
+    y: sessions
+
+  active_users_trend:
+    notes: "Average daily active users within each week."
+    type: line
+    query: weekly
+    title: Average Daily Active Users
+    x: week
+    y: avg_daily_active_users
+
+  depth_trend:
+    notes: "Session length and document size — is usage getting deeper or shallower?"
+    type: line
+    query: weekly
+    title: Session Minutes vs Pages per Doc
+    x: week
+    y: [avg_session_minutes, avg_pages_per_document]
+
+  signup_quality:
+    notes: "Paid conversion against junk signups — signup mix quality."
+    type: line
+    query: weekly
+    title: Paid vs Junk Share of New Signups
+    x: week
+    y: [paid_signup_share, junk_signup_share]
+    style:
+      axis_y:
+        labels:
+          format: "percent"
+
+  ticket_flow:
+    notes: "Tickets opened against tickets resolved each week — support backlog pressure."
+    type: bar
+    query: weekly
+    title: Tickets Created vs Resolved
+    x: week
+    y: [tickets_created, tickets_resolved]
+
+rows:
+  - cols: [kpi_sessions, kpi_session_minutes, kpi_paid_share, kpi_tickets]
+  - cols: [sessions_trend, active_users_trend]
+  - cols: [depth_trend, signup_quality]
+  - ticket_flow

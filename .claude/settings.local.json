@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gcloud iam:*)",
+      "Bash(gcloud projects add-iam-policy-binding:*)",
+      "Bash(gcloud projects get-iam-policy:*)",
+      "Bash(gcloud secrets:*)",
+      "Bash(bq:*)"
+    ]
+  }
+}

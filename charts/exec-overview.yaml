@@ -1,0 +1,125 @@
+_schema_version: "0.5.0"  # written automatically by dct migrate
+title: "Dundersign — Executive Overview"
+notes: "Company-level health for the leadership team: growth, revenue, document throughput."
+source: dundersign
+
+text: |
+  Trailing-30-day headline numbers against the prior 30 days, then complete-month
+  trends. The current partial month is excluded from every trend.
+
+queries:
+  headline:
+    notes: "Trailing-30-day totals with the prior 30-day period as a comparison."
+    sql: |
+      WITH cur AS (
+        SELECT SUM(new_users) AS nu, SUM(documents_created) AS dc,
+               SUM(documents_completed) AS dn, SUM(won_amount) AS won
+        FROM dundersign_serving.daily_metrics
+        WHERE date > DATE_SUB((SELECT MAX(date) FROM dundersign_serving.daily_metrics), INTERVAL 30 DAY)
+      ),
+      pri AS (
+        SELECT SUM(new_users) AS nu, SUM(documents_created) AS dc,
+               SUM(documents_completed) AS dn, SUM(won_amount) AS won
+        FROM dundersign_serving.daily_metrics
+        WHERE date > DATE_SUB((SELECT MAX(date) FROM dundersign_serving.daily_metrics), INTERVAL 60 DAY)
+          AND date <= DATE_SUB((SELECT MAX(date) FROM dundersign_serving.daily_metrics), INTERVAL 30 DAY)
+      )
+      SELECT cur.nu AS new_users,
+             SAFE_DIVIDE(cur.nu - pri.nu, pri.nu) AS new_users_delta,
+             cur.dc AS documents_created,
+             SAFE_DIVIDE(cur.dc - pri.dc, pri.dc) AS documents_created_delta,
+             SAFE_DIVIDE(cur.dn, cur.dc) AS completion_rate,
+             cur.won AS won_amount,
+             SAFE_DIVIDE(cur.won - pri.won, pri.won) AS won_amount_delta
+      FROM cur JOIN pri ON TRUE
+
+  monthly:
+    notes: "Complete months only, last 24, from the dbt serving layer."
+    sql: |
+      SELECT m.month, m.revenue, m.new_users, m.active_users,
+             m.documents_created, m.documents_completed,
+             SAFE_DIVIDE(m.documents_completed, m.documents_created) AS completion_rate
+      FROM dundersign_serving.monthly_metrics m
+      WHERE m.month < (SELECT DATE_TRUNC(MAX(date), MONTH) FROM dundersign_serving.daily_metrics)
+        AND m.month >= DATE_SUB((SELECT DATE_TRUNC(MAX(date), MONTH) FROM dundersign_serving.daily_metrics), INTERVAL 24 MONTH)
+      ORDER BY m.month
+
+charts:
+  kpi_new_users:
+    notes: "Acquisition pace over the trailing 30 days."
+    type: kpi
+    query: headline
+    label: New Users (30d)
+    value: new_users
+    support:
+      value: new_users_delta
+      label: vs prior 30d
+      format: percent_delta
+
+  kpi_documents:
+    notes: "Core product volume over the trailing 30 days."
+    type: kpi
+    query: headline
+    label: Documents Created (30d)
+    value: documents_created
+    support:
+      value: documents_created_delta
+      label: vs prior 30d
+      format: percent_delta
+
+  kpi_completion:
+    notes: "Share of created documents that reached completion."
+    type: kpi
+    query: headline
+    label: Completion Rate (30d)
+    value: completion_rate
+    style:
+      value:
+        format: percent
+
+  kpi_won:
+    notes: "Closed-won opportunity value over the trailing 30 days."
+    type: kpi
+    query: headline
+    label: Won Amount (30d)
+    value: won_amount
+    style:
+      value:
+        format: currency
+    support:
+      value: won_amount_delta
+      label: vs prior 30d
+      format: percent_delta
+
+  revenue_trend:
+    notes: "Monthly recognized revenue — the top-line growth story."
+    type: line
+    query: monthly
+    title: Revenue by Month
+    x: month
+    y: revenue
+    style:
+      axis_y:
+        labels:
+          format: "currency"
+
+  users_trend:
+    notes: "Active vs newly acquired users each month."
+    type: line
+    query: monthly
+    title: Active and New Users by Month
+    x: month
+    y: [active_users, new_users]
+
+  documents_trend:
+    notes: "Documents created vs completed — throughput and follow-through."
+    type: bar
+    query: monthly
+    title: Documents Created vs Completed
+    x: month
+    y: [documents_created, documents_completed]
+
+rows:
+  - cols: [kpi_new_users, kpi_documents, kpi_completion, kpi_won]
+  - revenue_trend
+  - cols: [users_trend, documents_trend]
