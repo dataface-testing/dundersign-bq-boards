@@ -1,0 +1,206 @@
+title: "Dundersign — Executive Overview"
+notes: "Company-wide health from the dundersign_serving marts: growth, document activity, revenue and support."
+
+source: warehouse
+
+queries:
+  headline:
+    notes: >
+      KPI row. Growth and bookings use the true last 30 days. Completion rate
+      instead uses documents created 31-60 days ago, compared with 61-90 days
+      ago: documents_completed is keyed to the document's creation date, so
+      recent cohorts are still being signed and their rate reads far too low
+      (5% at 1 day old, ~47% at 20 days, level at ~50% past 30).
+    sql: |
+      WITH ranked AS (
+        SELECT
+          ROW_NUMBER() OVER (ORDER BY date DESC) AS day_rank,
+          new_users,
+          documents_created,
+          documents_completed,
+          won_amount
+        FROM dundersign_serving.daily_metrics
+      ),
+      windows AS (
+        SELECT
+          SUM(IF(day_rank <= 30, new_users, 0))                        AS new_users,
+          SUM(IF(day_rank BETWEEN 31 AND 60, new_users, 0))            AS prev_new_users,
+          SUM(IF(day_rank <= 30, documents_created, 0))                AS documents_created,
+          SUM(IF(day_rank BETWEEN 31 AND 60, documents_created, 0))    AS prev_documents_created,
+          SUM(IF(day_rank <= 30, won_amount, 0))                       AS won_amount,
+          SUM(IF(day_rank BETWEEN 31 AND 60, won_amount, 0))           AS prev_won_amount,
+          SAFE_DIVIDE(
+            SUM(IF(day_rank BETWEEN 31 AND 60, documents_completed, 0)),
+            SUM(IF(day_rank BETWEEN 31 AND 60, documents_created, 0))
+          )                                                             AS completion_rate,
+          SAFE_DIVIDE(
+            SUM(IF(day_rank BETWEEN 61 AND 90, documents_completed, 0)),
+            SUM(IF(day_rank BETWEEN 61 AND 90, documents_created, 0))
+          )                                                             AS prev_completion_rate
+        FROM ranked
+        WHERE day_rank <= 90
+      )
+      SELECT
+        new_users,
+        documents_created,
+        won_amount,
+        completion_rate,
+        SAFE_DIVIDE(new_users - prev_new_users, prev_new_users)
+          AS new_users_change,
+        SAFE_DIVIDE(documents_created - prev_documents_created, prev_documents_created)
+          AS documents_created_change,
+        SAFE_DIVIDE(won_amount - prev_won_amount, prev_won_amount)
+          AS won_amount_change,
+        (completion_rate - prev_completion_rate) * 100
+          AS completion_rate_change_pts
+      FROM windows
+
+  monthly:
+    notes: >
+      Complete calendar months from monthly_metrics. The newest month is
+      excluded because daily_metrics still ends mid-month, so its totals would
+      read as a collapse rather than a partial month.
+    sql: |
+      SELECT
+        month,
+        new_users           AS `new users`,
+        active_users        AS `active users`,
+        documents_created   AS `documents created`,
+        documents_completed AS `documents completed`,
+        revenue,
+        tickets_created     AS `tickets created`,
+        tickets_resolved    AS `tickets resolved`
+      FROM dundersign_serving.monthly_metrics
+      WHERE month < DATE_TRUNC(
+        (SELECT MAX(date) FROM dundersign_serving.daily_metrics), MONTH
+      )
+      ORDER BY month
+
+  daily_recent:
+    notes: >
+      Last 90 days of daily activity. Two deliberate omissions: `sessions`,
+      which is byte-identical to active_users on all 1100 rows of
+      daily_metrics, and `documents_completed`, which is right-censored at the
+      recent end and would draw a false cliff.
+    sql: |
+      SELECT
+        date,
+        active_users      AS `active users`,
+        documents_created AS `documents created`
+      FROM dundersign_serving.daily_metrics
+      WHERE date > DATE_SUB(
+        (SELECT MAX(date) FROM dundersign_serving.daily_metrics), INTERVAL 90 DAY
+      )
+      ORDER BY date
+
+charts:
+  kpi_new_users:
+    notes: "Signups in the last 30 days against the 30 before."
+    query: headline
+    type: kpi
+    value: new_users
+    label: "New users · last 30d"
+    style:
+      value:
+        format: ",.0f"
+    support:
+      value: new_users_change
+      label: "vs prior 30d"
+      format: percent_delta
+
+  kpi_documents_created:
+    notes: "Documents started in the last 30 days — the top of the product funnel, and not subject to the completion lag."
+    query: headline
+    type: kpi
+    value: documents_created
+    label: "Documents created · last 30d"
+    style:
+      value:
+        format: ",.0f"
+    support:
+      value: documents_created_change
+      label: "vs prior 30d"
+      format: percent_delta
+
+  kpi_completion_rate:
+    notes: "Share of created documents eventually signed, measured on a matured cohort so the lag does not depress it."
+    query: headline
+    type: kpi
+    value: completion_rate
+    label: "Completion rate · created 31–60d ago"
+    style:
+      value:
+        format: ".1%"
+    support:
+      value: completion_rate_change_pts
+      label: "vs the 30 days before that"
+      format: percentage_points_delta
+
+  kpi_won_amount:
+    notes: "Closed-won bookings in the last 30 days. Month-to-month this figure is volatile."
+    query: headline
+    type: kpi
+    value: won_amount
+    label: "Won amount · last 30d"
+    style:
+      value:
+        format: "$,.0f"
+    support:
+      value: won_amount_change
+      label: "vs prior 30d"
+      format: percent_delta
+
+  documents_monthly:
+    notes: "Created vs completed documents by month — the gap between the lines is the drop-off between sending and signing."
+    query: monthly
+    type: line
+    x: month
+    y: ["documents created", "documents completed"]
+    title: "Document volume by month"
+    x_label: "Month"
+    y_label: "Documents"
+
+  revenue_monthly:
+    notes: "Monthly revenue from monthly_metrics."
+    query: monthly
+    type: bar
+    x: month
+    y: revenue
+    title: "Revenue by month"
+    x_label: "Month"
+    y_label: "Revenue"
+    style:
+      number_format: "$,.0f"
+
+  activity_daily:
+    notes: "Daily active users and documents created over the last 90 days — the short-run demand signal."
+    query: daily_recent
+    type: line
+    x: date
+    y: ["active users", "documents created"]
+    title: "Daily activity · last 90 days"
+    x_label: "Date"
+    y_label: "Count"
+
+  support_monthly:
+    notes: "Tickets created vs resolved each month; a persistent gap means a growing backlog."
+    query: monthly
+    type: line
+    x: month
+    y: ["tickets created", "tickets resolved"]
+    title: "Support tickets by month"
+    x_label: "Month"
+    y_label: "Tickets"
+
+rows:
+  - cols: [kpi_new_users, kpi_documents_created, kpi_completion_rate, kpi_won_amount]
+  - documents_monthly
+  - cols: [revenue_monthly, activity_daily]
+  - support_monthly
+  - text: |
+      **Reading these numbers.** `documents_completed` is dated by when the
+      document was *created*, not signed, so the most recent weeks are still
+      filling in — completion sits near 5% at one day old and only settles
+      around 50% past 30 days. Completion rate above is therefore measured on a
+      matured cohort, and the daily chart plots created rather than completed.
+      The current partial month is excluded from every monthly chart.
