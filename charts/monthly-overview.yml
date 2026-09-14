@@ -1,0 +1,125 @@
+title: Dundersign monthly overview
+notes: >
+  Company health from dundersign_serving.monthly_metrics: revenue, users,
+  document throughput, and support load. Completed months only; the latest
+  month in the table is still accruing and is excluded.
+
+source: dundersign
+
+queries:
+  last_12_months:
+    notes: One row of totals over the trailing 12 complete months.
+    sql: |
+      SELECT
+        SUM(revenue) AS revenue,
+        SUM(new_users) AS new_users,
+        SUM(documents_completed) AS documents_completed,
+        SUM(tickets_created) AS tickets_created
+      FROM dundersign_serving.monthly_metrics
+      WHERE month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+        AND month >= DATE_SUB(
+          (SELECT MAX(month) FROM dundersign_serving.monthly_metrics),
+          INTERVAL 12 MONTH
+        )
+
+  monthly:
+    notes: One row per complete month with the headline metrics.
+    sql: |
+      SELECT
+        month,
+        revenue,
+        active_users,
+        new_users,
+        documents_created,
+        documents_completed,
+        tickets_created,
+        tickets_resolved
+      FROM dundersign_serving.monthly_metrics
+      WHERE month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+
+charts:
+  kpi_revenue:
+    notes: How much revenue did the last 12 complete months bring in?
+    type: kpi
+    query: last_12_months
+    label: Revenue, last 12 months
+    value: revenue
+    style:
+      value:
+        format: currency
+
+  kpi_new_users:
+    notes: How many users signed up over the last 12 complete months?
+    type: kpi
+    query: last_12_months
+    label: New users, last 12 months
+    value: new_users
+    style:
+      value:
+        format: integer
+
+  kpi_documents_completed:
+    notes: How many documents were completed over the last 12 complete months?
+    type: kpi
+    query: last_12_months
+    label: Documents completed, last 12 months
+    value: documents_completed
+    style:
+      value:
+        format: number
+
+  kpi_tickets_created:
+    notes: How many support tickets were opened over the last 12 complete months?
+    type: kpi
+    query: last_12_months
+    label: Support tickets, last 12 months
+    value: tickets_created
+    style:
+      value:
+        format: integer
+
+  revenue_trend:
+    notes: Is monthly revenue growing?
+    type: line
+    query: monthly
+    title: Monthly revenue
+    x: month
+    y: revenue
+    style:
+      number_format: currency
+
+  active_users_trend:
+    notes: Is the monthly active user base growing?
+    type: line
+    query: monthly
+    title: Monthly active users
+    x: month
+    y: active_users
+    style:
+      number_format: number
+
+  documents_trend:
+    notes: How many documents are created each month, and how many get completed?
+    type: line
+    query: monthly
+    title: Documents created vs. completed
+    x: month
+    y: [documents_created, documents_completed]
+    style:
+      number_format: number
+
+  tickets_trend:
+    notes: Is support keeping up with incoming tickets?
+    type: line
+    query: monthly
+    title: Support tickets created vs. resolved
+    x: month
+    y: [tickets_created, tickets_resolved]
+    style:
+      number_format: integer
+
+rows:
+  - cols: [kpi_revenue, kpi_new_users, kpi_documents_completed, kpi_tickets_created]
+  - cols: [revenue_trend, active_users_trend]
+  - cols: [documents_trend, tickets_trend]
