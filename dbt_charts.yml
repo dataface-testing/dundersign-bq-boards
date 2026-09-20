@@ -5,6 +5,12 @@
 # as the serve root.
 
 published_to: "https://dbtcharts.com/cx1-05/dundersign-bq-boards/"
+
+sources:
+  dundersign:
+    type: bigquery
+    project: internal-dataface-eng
+    dataset: dundersign_serving
 #
 # sources: is the registry of named connections your boards read from.
 # A board picks one with `source: <name>`; it never defines a connection

@@ -1,0 +1,86 @@
+title: Dundersign monthly metrics
+notes: Monthly product and support health from the dundersign serving layer.
+source: dundersign
+
+queries:
+  latest_kpis:
+    notes: Latest monthly values for the headline operating metrics.
+    sql: |
+      SELECT
+        month,
+        new_users,
+        active_users,
+        sessions,
+        documents_completed,
+        revenue,
+        tickets_resolved
+      FROM `internal-dataface-eng.dundersign_serving.monthly_metrics`
+      QUALIFY ROW_NUMBER() OVER (ORDER BY month DESC) = 1
+
+  monthly_trends:
+    notes: Monthly operating metrics used for the trend view.
+    sql: |
+      SELECT
+        month,
+        new_users,
+        active_users,
+        documents_completed,
+        revenue,
+        tickets_resolved
+      FROM `internal-dataface-eng.dundersign_serving.monthly_metrics`
+      ORDER BY month
+
+charts:
+  active_users:
+    notes: How the active user base changes month to month.
+    type: kpi
+    query: latest_kpis
+    label: Active users, latest month
+    value: active_users
+    style:
+      value:
+        format: integer
+
+  monthly_revenue:
+    notes: Revenue trend across the available monthly history.
+    type: line
+    query: monthly_trends
+    title: Monthly revenue
+    x: month
+    y: revenue
+    style:
+      number_format: currency
+
+  user_and_document_trends:
+    notes: Monthly new users and completed documents for adoption context.
+    type: line
+    query: monthly_trends
+    title: Adoption and completion
+    x: month
+    y: [new_users, documents_completed]
+    style:
+      number_format: integer
+
+  monthly_detail:
+    notes: Source metrics for detailed inspection.
+    type: table
+    query: monthly_trends
+    title: Monthly detail
+    style:
+      columns:
+        new_users:
+          format: integer
+        active_users:
+          format: integer
+        documents_completed:
+          format: integer
+        revenue:
+          format: currency_whole
+        tickets_resolved:
+          format: integer
+
+rows:
+  - active_users
+  - monthly_revenue
+  - user_and_document_trends
+  - monthly_detail
