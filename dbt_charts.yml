@@ -4,3 +4,5 @@ sources:
     type: bigquery
     project: internal-dataface-eng
     dataset: dundersign_serving
+
+published_to: "https://dbtcharts.com/cx3-05/dundersign-bq-boards/"
