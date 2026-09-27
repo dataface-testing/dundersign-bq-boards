@@ -1,0 +1,100 @@
+title: Dundersign business overview
+notes: Core product, engagement, and revenue metrics from the serving layer.
+source: warehouse
+
+queries:
+  latest_month:
+    sql: |
+      SELECT month, new_users, active_users, sessions, revenue,
+             documents_completed, tickets_resolved
+      FROM monthly_metrics
+      QUALIFY ROW_NUMBER() OVER (ORDER BY month DESC) = 1
+
+  monthly_trend:
+    sql: |
+      SELECT month, new_users, active_users, revenue, documents_completed
+      FROM monthly_metrics
+      ORDER BY month
+
+  daily_activity:
+    sql: |
+      SELECT date, documents_created, documents_completed, active_users, sessions
+      FROM daily_metrics
+      WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+      ORDER BY date
+
+charts:
+  active_users_kpi:
+    type: kpi
+    query: latest_month
+    label: Active users, latest month
+    value: active_users
+    style:
+      value:
+        format: integer
+
+  new_users_kpi:
+    type: kpi
+    query: latest_month
+    label: New users, latest month
+    value: new_users
+    style:
+      value:
+        format: integer
+
+  revenue_kpi:
+    type: kpi
+    query: latest_month
+    label: Revenue, latest month
+    value: revenue
+    style:
+      value:
+        format: currency_whole
+
+  users_trend:
+    type: line
+    query: monthly_trend
+    title: User growth
+    x: month
+    y: active_users
+    style:
+      number_format: integer
+
+  revenue_trend:
+    type: line
+    query: monthly_trend
+    title: Monthly revenue
+    x: month
+    y: revenue
+    style:
+      number_format: currency
+
+  daily_activity:
+    type: line
+    query: daily_activity
+    title: Daily product activity
+    x: date
+    y: documents_completed
+    style:
+      number_format: integer
+
+  monthly_detail:
+    type: table
+    query: monthly_trend
+    title: Monthly metrics
+    style:
+      columns:
+        revenue:
+          format: currency_whole
+        new_users:
+          format: integer
+        active_users:
+          format: integer
+        documents_completed:
+          format: integer
+
+rows:
+  - cols: [active_users_kpi, new_users_kpi, revenue_kpi]
+  - cols: [users_trend, revenue_trend]
+  - daily_activity
+  - monthly_detail

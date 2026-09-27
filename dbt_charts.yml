@@ -1,0 +1,8 @@
+published_to: "https://dbtcharts.com/cx4-05/dundersign-bq-boards/"
+
+sources:
+  warehouse:
+    type: bigquery
+    project: internal-dataface-eng
+    dataset: dundersign_serving
+    location: us-east4
