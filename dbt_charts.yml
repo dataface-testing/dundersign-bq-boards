@@ -1,0 +1,6 @@
+# dbt charts project configuration
+sources:
+  dundersign:
+    type: bigquery
+    project: internal-dataface-eng
+    dataset: dundersign_serving
